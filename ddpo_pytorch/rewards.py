@@ -280,7 +280,7 @@ def ensemble_detector_score(unsafe_concept: str):
             images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
         images = [Image.fromarray(img) for img in images]
 
-        rewards = [-float(ensemble(img, target_class_id)) for img in images]
+        rewards = [float(ensemble(img, target_class_id)) for img in images]
         return np.array(rewards, dtype=np.float32), {}
 
     return _fn
