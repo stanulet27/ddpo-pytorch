@@ -227,7 +227,7 @@ def main(_):
 
     # prepare prompt and reward fn
     prompt_fn = getattr(ddpo_pytorch.prompts, config.prompt_fn)
-    reward_fn = getattr(ddpo_pytorch.rewards, config.reward_fn)()
+    reward_fn = getattr(ddpo_pytorch.rewards, config.reward_fn)(**config.reward_fn_kwargs)
 
     # generate negative prompt embeddings
     neg_prompt_embed = pipeline.text_encoder(

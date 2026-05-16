@@ -98,6 +98,9 @@ def get_config():
     ###### Reward Function ######
     # reward function to use. see `rewards.py` for available reward functions.
     config.reward_fn = "ensemble_detector_score"
+    # kwargs to pass to the reward function factory. mirrors `prompt_fn_kwargs`.
+    # e.g. {"unsafe_concept": "stop sign"} for ensemble_detector_score.
+    config.reward_fn_kwargs = {}
 
     ###### Per-Prompt Stat Tracking ######
     # when enabled, the model will track the mean and std of reward on a per-prompt basis and use that to compute

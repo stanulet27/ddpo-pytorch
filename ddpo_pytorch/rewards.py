@@ -264,15 +264,23 @@ class Ensemble:
         return -np.mean([detr_score, yolo_score, resnet_score]) + 0.2
 
 
-def ensemble_detector_score():
+def ensemble_detector_score(unsafe_concept: str):
+    """Reward factory that penalizes the presence of ``unsafe_concept`` (a COCO class name)
+    in generated images. Higher detector confidence => lower (more negative) reward, so
+    PPO is pushed *away* from generating the concept.
+    """
     ensemble = Ensemble()
+    target_class_id = COCO_CLASSES.index(unsafe_concept)
 
     def _fn(images, prompts, metadata):
-        avg_scores = []
-        for image, prompt in zip(images, prompts):
-            ensemble_score = ensemble(image, prompt)
-            avg_scores.append(ensemble_score)
+        # DDPO passes a float tensor in [0,1] NCHW. The ensemble members expect PIL
+        # (call_resnet uses image.convert("RGB")), so normalize once here.
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+        images = [Image.fromarray(img) for img in images]
 
-        return avg_scores, {}
+        rewards = [-float(ensemble(img, target_class_id)) for img in images]
+        return np.array(rewards, dtype=np.float32), {}
 
     return _fn
