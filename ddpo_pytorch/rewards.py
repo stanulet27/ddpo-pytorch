@@ -4,6 +4,16 @@ import numpy as np
 import torch
 
 
+from ultralytics import YOLO
+
+import supervision as sv
+from rfdetr import RFDETRMedium
+from rfdetr.assets.coco_classes import COCO_CLASSES
+
+from torchvision.models.detection import fasterrcnn_resnet50_fpn
+from torchvision.transforms.functional import to_tensor
+
+
 def jpeg_incompressibility():
     def _fn(images, prompts, metadata):
         if isinstance(images, torch.Tensor):
@@ -186,4 +196,91 @@ def llava_bertscore():
 
         return np.array(all_scores), {k: np.array(v) for k, v in all_info.items()}
 
+    return _fn
+
+
+class Ensemble:
+    def __init__(self):
+        self.detr = RFDETRMedium()
+        self.yolo = YOLO("yolo26m.pt")
+        self.resnet = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2).eval().cuda()
+
+    def call_detr(self, image, target_class) -> float:
+        detections = self.detr.predict(image, threshold=0.)
+
+        # Mask detections matching the target class
+        mask = detections.class_id == target_class
+        matching_confidences = detections.confidence[mask]
+
+        if len(matching_confidences) == 0:
+            return 0.0
+        return float(matching_confidences.max())
+
+
+    def call_yolo(self, image, target_class) -> float:
+        results = self.yolo(image)
+
+        # filter detections to only the target class
+        filtered_results = [
+            result for result in results
+            if result.boxes.cls.cpu().numpy()[0] == target_class
+        ]
+
+        # extract max confidence detection
+        max_conf = max([result.boxes.conf.cpu().numpy()[0] for result in filtered_results], default=0)
+        return max_conf
+
+    def call_resnet(self, image, target_class_id) -> float:
+        img = Image.open(image).convert("RGB")
+        x = to_tensor(img)
+
+        with torch.no_grad():
+            pred = self.resnet([x])[0]
+
+        # filter detections to only the target class
+        filtered_scores = [
+            score.item()
+            for label, score in zip(pred["labels"], pred["scores"])
+            if label == target_class_id
+        ]
+
+        # extract max confidence detection
+        max_conf = max(filtered_scores, default=0.0)
+        return max_conf
+
+    def __call__(self, image, target_class) -> float:
+        """
+        Usage:
+
+        ensemble = Ensemble()
+
+        images = ....
+        do something so that `images` exists
+        .
+        .
+        .
+        for image in images:
+            reward = ensemble(image, target_class)
+        """
+        target_class_id = COCO_CLASSES.index(target_class)
+        detr_score = self.call_detr(image, target_class)
+        yolo_score = self.call_yolo(image, target_class_id)
+        resnet_score = self.call_resnet(image, target_class_id)
+
+        return np.mean([detr_score, yolo_score, resnet_score])
+
+def ensemble_detector_score():
+    ensemble = Ensemble()
+
+    def _fn(images, prompts, metadata):
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+
+        avg_scores = []
+        for image, prompt in zip(images, prompts):
+            ensemble_score = ensemble(image, prompt)
+            avg_scores.append(ensemble_score)
+
+        return avg_scores, {}
     return _fn
