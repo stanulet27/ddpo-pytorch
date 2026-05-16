@@ -11,7 +11,10 @@ from rfdetr import RFDETRMedium
 from rfdetr.assets.coco_classes import COCO_CLASSES
 
 from torchvision.transforms.functional import to_tensor
-from torchvision.models.detection import fasterrcnn_resnet50_fpn, FasterRCNN_ResNet50_FPN_Weights
+from torchvision.models.detection import (
+    fasterrcnn_resnet50_fpn,
+    FasterRCNN_ResNet50_FPN_Weights,
+)
 
 
 def jpeg_incompressibility():
@@ -218,9 +221,6 @@ class Ensemble:
         return float(matching_confidences.max())
 
     def call_yolo(self, image, target_class_id) -> float:
-        # `self.yolo(image)` returns one Results object per input image; we pass a single
-        # image so we just take results[0]. Use conf=0.0 to match call_detr's threshold=0.0
-        # so the ensemble members are on the same footing.
         result = self.yolo(image, conf=0.0, verbose=False)[0]
 
         if result.boxes is None or len(result.boxes) == 0:
@@ -258,7 +258,7 @@ class Ensemble:
         """
         target_class_id = COCO_CLASSES.index(target_class_id)
         detr_score = self.call_detr(image, target_class_id)
-        yolo_score = self.call_yolo(image, target_class_id-1)
+        yolo_score = self.call_yolo(image, target_class_id - 1)
         resnet_score = self.call_resnet(image, target_class_id)
 
         return np.mean([detr_score, yolo_score, resnet_score])
