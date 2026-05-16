@@ -277,10 +277,6 @@ def ensemble_detector_score():
     ensemble = Ensemble()
 
     def _fn(images, prompts, metadata):
-        if isinstance(images, torch.Tensor):
-            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
-            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
-
         avg_scores = []
         for image, prompt in zip(images, prompts):
             ensemble_score = ensemble(image, prompt)
