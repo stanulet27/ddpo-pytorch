@@ -91,16 +91,17 @@ def get_config():
 
     ###### Prompt Function ######
     # prompt function to use. see `prompts.py` for available prompt functions.
-    config.prompt_fn = "imagenet_animals"
-    # kwargs to pass to the prompt function.
-    config.prompt_fn_kwargs = {}
+    # `from_file` reads one prompt per line and samples uniformly. Files are looked up
+    # first in CWD, then in ddpo_pytorch/assets/.
+    config.prompt_fn = "from_file"
+    config.prompt_fn_kwargs = {"path": "teddy_bear_captions.txt"}
 
     ###### Reward Function ######
     # reward function to use. see `rewards.py` for available reward functions.
     config.reward_fn = "ensemble_detector_score"
     # kwargs to pass to the reward function factory. mirrors `prompt_fn_kwargs`.
     # e.g. {"unsafe_concept": "stop sign"} for ensemble_detector_score.
-    config.reward_fn_kwargs = {}
+    config.reward_fn_kwargs = {"unsafe_concept": "teddy bear"}
 
     ###### Per-Prompt Stat Tracking ######
     # when enabled, the model will track the mean and std of reward on a per-prompt basis and use that to compute
