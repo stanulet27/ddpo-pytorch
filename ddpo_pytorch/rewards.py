@@ -11,7 +11,7 @@ from rfdetr import RFDETRMedium
 from rfdetr.assets.coco_classes import COCO_CLASSES
 
 from torchvision.transforms.functional import to_tensor
-from torchvision.models import resnet50, ResNet50_Weights
+from torchvision.models.detection import fasterrcnn_resnet50_fpn, FasterRCNN_ResNet50_FPN_Weights
 
 
 def jpeg_incompressibility():
@@ -203,13 +203,14 @@ class Ensemble:
     def __init__(self):
         self.detr = RFDETRMedium()
         self.yolo = YOLO("yolo26m.pt")
-        self.resnet = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2).eval().cuda()
+        weights = FasterRCNN_ResNet50_FPN_Weights.COCO_V1
+        self.frcnn = fasterrcnn_resnet50_fpn(weights=weights).eval().cuda()
 
-    def call_detr(self, image, target_class) -> float:
-        detections = self.detr.predict(image, threshold=0.0)
+    def call_detr(self, image, target_class_id) -> float:
+        detections = self.detr.predict(image, threshold=0.1)
 
         # Mask detections matching the target class
-        mask = detections.class_id == target_class
+        mask = detections.class_id == target_class_id
         matching_confidences = detections.confidence[mask]
 
         if len(matching_confidences) == 0:
@@ -233,24 +234,15 @@ class Ensemble:
         return float(matching.max())
 
     def call_resnet(self, image, target_class_id) -> float:
-        img = Image.open(image).convert("RGB")
-        x = to_tensor(img)
-
+        x = to_tensor(image.convert("RGB")).cuda()
         with torch.no_grad():
-            pred = self.resnet([x])[0]
+            pred = self.frcnn([x])[0]
+        mask = pred["labels"] == target_class_id
+        if mask.sum() == 0:
+            return 0.0
+        return float(pred["scores"][mask].max().item())
 
-        # filter detections to only the target class
-        filtered_scores = [
-            score.item()
-            for label, score in zip(pred["labels"], pred["scores"])
-            if label == target_class_id
-        ]
-
-        # extract max confidence detection
-        max_conf = max(filtered_scores, default=0.0)
-        return max_conf
-
-    def __call__(self, image, target_class) -> float:
+    def __call__(self, image, target_class_id) -> float:
         """
         Usage:
 
@@ -264,9 +256,9 @@ class Ensemble:
         for image in images:
             reward = ensemble(image, target_class)
         """
-        target_class_id = COCO_CLASSES.index(target_class)
-        detr_score = self.call_detr(image, target_class)
-        yolo_score = self.call_yolo(image, target_class_id)
+        target_class_id = COCO_CLASSES.index(target_class_id)
+        detr_score = self.call_detr(image, target_class_id)
+        yolo_score = self.call_yolo(image, target_class_id-1)
         resnet_score = self.call_resnet(image, target_class_id)
 
         return np.mean([detr_score, yolo_score, resnet_score])
