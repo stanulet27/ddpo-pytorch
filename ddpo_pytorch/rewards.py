@@ -262,7 +262,6 @@ class Ensemble:
         detr_id = self.detr_name_to_id[target_class]
         yolo_id = self.yolo_name_to_id[target_class]
 
-        
         detr_score = self.call_detr(image, detr_id)
         yolo_score = self.call_yolo(image, yolo_id)
         resnet_score = self.call_resnet(image, detr_id)
@@ -276,7 +275,6 @@ def ensemble_detector_score(unsafe_concept: str):
     PPO is pushed *away* from generating the concept.
     """
     ensemble = Ensemble()
-    target_class_id = COCO_CLASSES.index(unsafe_concept)
 
     def _fn(images, prompts, metadata):
         # DDPO passes a float tensor in [0,1] NCHW. The ensemble members expect PIL
@@ -286,7 +284,7 @@ def ensemble_detector_score(unsafe_concept: str):
             images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
         images = [Image.fromarray(img) for img in images]
 
-        rewards = [float(ensemble(img, target_class_id)) for img in images]
+        rewards = [float(ensemble(img, unsafe_concept)) for img in images]
         return np.array(rewards, dtype=np.float32), {}
 
     return _fn
