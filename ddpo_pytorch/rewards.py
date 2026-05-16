@@ -216,22 +216,21 @@ class Ensemble:
             return 0.0
         return float(matching_confidences.max())
 
-    def call_yolo(self, image, target_class) -> float:
-        results = self.yolo(image)
+    def call_yolo(self, image, target_class_id) -> float:
+        # `self.yolo(image)` returns one Results object per input image; we pass a single
+        # image so we just take results[0]. Use conf=0.0 to match call_detr's threshold=0.0
+        # so the ensemble members are on the same footing.
+        result = self.yolo(image, conf=0.0, verbose=False)[0]
 
-        # filter detections to only the target class
-        filtered_results = [
-            result
-            for result in results
-            if result.boxes.cls.cpu().numpy()[0] == target_class
-        ]
+        if result.boxes is None or len(result.boxes) == 0:
+            return 0.0
 
-        # extract max confidence detection
-        max_conf = max(
-            [result.boxes.conf.cpu().numpy()[0] for result in filtered_results],
-            default=0,
-        )
-        return max_conf
+        cls = result.boxes.cls.cpu().numpy()
+        conf = result.boxes.conf.cpu().numpy()
+        matching = conf[cls == target_class_id]
+        if matching.size == 0:
+            return 0.0
+        return float(matching.max())
 
     def call_resnet(self, image, target_class_id) -> float:
         img = Image.open(image).convert("RGB")
