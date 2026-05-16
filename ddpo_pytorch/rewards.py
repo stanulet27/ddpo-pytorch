@@ -261,7 +261,7 @@ class Ensemble:
         yolo_score = self.call_yolo(image, target_class_id - 1)
         resnet_score = self.call_resnet(image, target_class_id)
 
-        return np.mean([detr_score, yolo_score, resnet_score])
+        return -np.mean([detr_score, yolo_score, resnet_score]) + 0.2
 
 
 def ensemble_detector_score():
