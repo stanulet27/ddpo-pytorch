@@ -6,10 +6,6 @@ import torch
 
 from ultralytics import YOLO
 
-import supervision as sv
-from rfdetr import RFDETRMedium
-from rfdetr.assets.coco_classes import COCO_CLASSES
-
 from torchvision.transforms.functional import to_tensor
 from torchvision.models.detection import (
     fasterrcnn_resnet50_fpn,
@@ -204,24 +200,24 @@ def llava_bertscore():
 
 class Ensemble:
     def __init__(self):
-        self.detr = RFDETRMedium()
+        #self.detr = RFDETRMedium()
         self.yolo = YOLO("yolo26m.pt")
         weights = FasterRCNN_ResNet50_FPN_Weights.COCO_V1
         self.frcnn = fasterrcnn_resnet50_fpn(weights=weights).eval().cuda()
 
-        self.detr_name_to_id = {v: k for k, v in COCO_CLASSES.items()}
+        #self.detr_name_to_id = {v: k for k, v in COCO_CLASSES.items()}
         self.yolo_name_to_id = {v: k for k, v in self.yolo.names.items()}
 
-    def call_detr(self, image, target_class_id) -> float:
-        detections = self.detr.predict(image, threshold=0.1)
+    # def call_detr(self, image, target_class_id) -> float:
+    #     detections = self.detr.predict(image, threshold=0.1)
 
-        # Mask detections matching the target class
-        mask = detections.class_id == target_class_id
-        matching_confidences = detections.confidence[mask]
+    #     # Mask detections matching the target class
+    #     mask = detections.class_id == target_class_id
+    #     matching_confidences = detections.confidence[mask]
 
-        if len(matching_confidences) == 0:
-            return 0.0
-        return float(matching_confidences.max())
+    #     if len(matching_confidences) == 0:
+    #         return 0.0
+    #     return float(matching_confidences.max())
 
     def call_yolo(self, image, target_class_id) -> float:
         result = self.yolo(image, conf=0.0, verbose=False)[0]
@@ -259,14 +255,15 @@ class Ensemble:
         for image in images:
             reward = ensemble(image, target_class)
         """
-        detr_id = self.detr_name_to_id[target_class]
+        #detr_id = self.detr_name_to_id[target_class]
+        detr_id = 88
         yolo_id = self.yolo_name_to_id[target_class]
 
-        detr_score = self.call_detr(image, detr_id)
+        #detr_score = self.call_detr(image, detr_id)
         yolo_score = self.call_yolo(image, yolo_id)
         resnet_score = self.call_resnet(image, detr_id)
 
-        return -np.mean([detr_score, yolo_score, resnet_score]) + 0.2
+        return -np.mean([yolo_score, resnet_score]) + 0.2
 
 
 def ensemble_detector_score(unsafe_concept: str):
