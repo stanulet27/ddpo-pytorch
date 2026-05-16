@@ -209,6 +209,9 @@ class Ensemble:
         weights = FasterRCNN_ResNet50_FPN_Weights.COCO_V1
         self.frcnn = fasterrcnn_resnet50_fpn(weights=weights).eval().cuda()
 
+        self.detr_name_to_id = {v: k for k, v in COCO_CLASSES.items()}
+        self.yolo_name_to_id = {v: k for k, v in self.yolo.names.items()}
+
     def call_detr(self, image, target_class_id) -> float:
         detections = self.detr.predict(image, threshold=0.1)
 
@@ -242,7 +245,7 @@ class Ensemble:
             return 0.0
         return float(pred["scores"][mask].max().item())
 
-    def __call__(self, image, target_class_id) -> float:
+    def __call__(self, image, target_class) -> float:
         """
         Usage:
 
@@ -256,10 +259,13 @@ class Ensemble:
         for image in images:
             reward = ensemble(image, target_class)
         """
-        target_class_id = COCO_CLASSES.index(target_class_id)
-        detr_score = self.call_detr(image, target_class_id)
-        yolo_score = self.call_yolo(image, target_class_id - 1)
-        resnet_score = self.call_resnet(image, target_class_id)
+        detr_id = self.detr_name_to_id[target_class]
+        yolo_id = self.yolo_name_to_id[target_class]
+
+        
+        detr_score = self.call_detr(image, detr_id)
+        yolo_score = self.call_yolo(image, yolo_id)
+        resnet_score = self.call_resnet(image, detr_id)
 
         return -np.mean([detr_score, yolo_score, resnet_score]) + 0.2
 
