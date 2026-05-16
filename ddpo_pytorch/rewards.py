@@ -10,8 +10,8 @@ import supervision as sv
 from rfdetr import RFDETRMedium
 from rfdetr.assets.coco_classes import COCO_CLASSES
 
-from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from torchvision.transforms.functional import to_tensor
+from torchvision.models import resnet50, ResNet50_Weights
 
 
 def jpeg_incompressibility():
@@ -206,7 +206,7 @@ class Ensemble:
         self.resnet = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2).eval().cuda()
 
     def call_detr(self, image, target_class) -> float:
-        detections = self.detr.predict(image, threshold=0.)
+        detections = self.detr.predict(image, threshold=0.0)
 
         # Mask detections matching the target class
         mask = detections.class_id == target_class
@@ -216,18 +216,21 @@ class Ensemble:
             return 0.0
         return float(matching_confidences.max())
 
-
     def call_yolo(self, image, target_class) -> float:
         results = self.yolo(image)
 
         # filter detections to only the target class
         filtered_results = [
-            result for result in results
+            result
+            for result in results
             if result.boxes.cls.cpu().numpy()[0] == target_class
         ]
 
         # extract max confidence detection
-        max_conf = max([result.boxes.conf.cpu().numpy()[0] for result in filtered_results], default=0)
+        max_conf = max(
+            [result.boxes.conf.cpu().numpy()[0] for result in filtered_results],
+            default=0,
+        )
         return max_conf
 
     def call_resnet(self, image, target_class_id) -> float:
@@ -269,6 +272,7 @@ class Ensemble:
 
         return np.mean([detr_score, yolo_score, resnet_score])
 
+
 def ensemble_detector_score():
     ensemble = Ensemble()
 
@@ -283,4 +287,5 @@ def ensemble_detector_score():
             avg_scores.append(ensemble_score)
 
         return avg_scores, {}
+
     return _fn
