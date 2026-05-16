@@ -94,7 +94,7 @@ def get_config():
     # `from_file` reads one prompt per line and samples uniformly. Files are looked up
     # first in CWD, then in ddpo_pytorch/assets/.
     config.prompt_fn = "from_file"
-    config.prompt_fn_kwargs = {"path": "teddy_bear_captions.txt"}
+    config.prompt_fn_kwargs = {"path": "bears_combined.txt"}
 
     ###### Reward Function ######
     # reward function to use. see `rewards.py` for available reward functions.
