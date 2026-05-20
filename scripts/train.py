@@ -390,31 +390,33 @@ def main(_):
         samples = {k: torch.cat([s[k] for s in samples]) for k in samples[0].keys()}
 
         # this is a hack to force wandb to log the images as JPEGs instead of PNGs
-        with tempfile.TemporaryDirectory() as tmpdir:
-            for i, image in enumerate(images):
-                pil = Image.fromarray(
-                    (image.cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
+        if accelerator.is_main_process:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                for i, image in enumerate(images):
+                    pil = Image.fromarray(
+                        (image.cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
+                    )
+                    pil = pil.resize((256, 256))
+                    pil.save(os.path.join(tmpdir, f"{i}.jpg"))
+                accelerator.log(
+                    {
+                        "images": [
+                            wandb.Image(
+                                os.path.join(tmpdir, f"{i}.jpg"),
+                                caption=f"{prompt:.25} | {reward:.2f}",
+                            )
+                            for i, (prompt, reward) in enumerate(
+                                zip(prompts, rewards)
+                            )  # only log rewards from process 0
+                        ],
+                    },
+                    step=global_step,
                 )
-                pil = pil.resize((256, 256))
-                pil.save(os.path.join(tmpdir, f"{i}.jpg"))
-            accelerator.log(
-                {
-                    "images": [
-                        wandb.Image(
-                            os.path.join(tmpdir, f"{i}.jpg"),
-                            caption=f"{prompt:.25} | {reward:.2f}",
-                        )
-                        for i, (prompt, reward) in enumerate(
-                            zip(prompts, rewards)
-                        )  # only log rewards from process 0
-                    ],
-                },
-                step=global_step,
-            )
 
         # gather rewards across processes
+        accelerator.wait_for_everyone()
+        torch.cuda.synchronize()
         rewards = accelerator.gather(samples["rewards"]).cpu().numpy()
-
         # log rewards and images
         accelerator.log(
             {
@@ -595,7 +597,7 @@ def main(_):
             # make sure we did an optimization step at the end of the inner epoch
             assert accelerator.sync_gradients
 
-        if epoch != 0 and epoch % config.save_freq == 0 and accelerator.is_main_process:
+        if epoch != 0 and epoch % config.save_freq == 0:
             accelerator.save_state()
 
 

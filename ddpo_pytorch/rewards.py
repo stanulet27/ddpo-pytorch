@@ -200,15 +200,17 @@ def llava_bertscore():
 
 class Ensemble:
     def __init__(self):
-        self.yolo = YOLO("yolo26m.pt")
-        self.rtdetr = RTDETR("rtdetr-l.pt") 
+        self.device = torch.device(f"cuda:{torch.cuda.current_device()}")
+        self.yolo = YOLO("yolo26m.pt").to(self.device)
+        self.rtdetr = RTDETR("rtdetr-l.pt").to(self.device)
         weights = FasterRCNN_ResNet50_FPN_Weights.COCO_V1
-        self.frcnn = fasterrcnn_resnet50_fpn(weights=weights).eval().cuda()
+        self.frcnn = fasterrcnn_resnet50_fpn(weights=weights).eval().to(self.device)
 
         self.yolo_name_to_id   = {v: k for k, v in self.yolo.names.items()}
 
     def call_detr(self, image, target_class_id) -> float:
-        result = self.rtdetr(image, conf=0.0, verbose=False)[0]
+        result = self.rtdetr(image, conf=0.0, verbose=False, device=self.device)[0]
+        
         if result.boxes is None or len(result.boxes) == 0:
             return 0.0
         cls  = result.boxes.cls.cpu().numpy()
@@ -219,7 +221,7 @@ class Ensemble:
         return float(matching.max())
 
     def call_yolo(self, image, target_class_id) -> float:
-        result = self.yolo(image, conf=0.0, verbose=False)[0]
+        result = self.yolo(image, conf=0.0, verbose=False, device=self.device)[0]
 
         if result.boxes is None or len(result.boxes) == 0:
             return 0.0
@@ -232,7 +234,7 @@ class Ensemble:
         return float(matching.max())
 
     def call_resnet(self, image, target_class_id) -> float:
-        x = to_tensor(image.convert("RGB")).cuda()
+        x = to_tensor(image.convert("RGB")).to(self.device)
         with torch.no_grad():
             pred = self.frcnn([x])[0]
         mask = pred["labels"] == target_class_id

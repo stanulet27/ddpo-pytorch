@@ -28,6 +28,9 @@ def from_file(path, low=None, high=None):
     return random.choice(prompts), {}
 
 
+def bears_combined():
+    return from_file('bears_combined.txt')
+
 def imagenet_all():
     return from_file("imagenet_classes.txt")
 
