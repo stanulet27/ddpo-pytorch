@@ -16,6 +16,8 @@ import numpy as np
 import ddpo_pytorch.prompts
 import ddpo_pytorch.rewards
 from ddpo_pytorch.stat_tracking import PerPromptStatTracker
+from ddpo_pytorch.pkpo import apply_pkpo_to_groups, mean_rho_per_group
+from ddpo_pytorch.pkpo_schedule import current_pkpo_k
 from ddpo_pytorch.diffusers_patch.pipeline_with_logprob import pipeline_with_logprob
 from ddpo_pytorch.diffusers_patch.ddim_with_logprob import ddim_step_with_logprob
 import torch
@@ -242,11 +244,13 @@ def main(_):
             max_length=pipeline.tokenizer.model_max_length,
         ).input_ids.to(accelerator.device)
     )[0]
-    sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.batch_size, 1, 1)
     train_neg_prompt_embeds = neg_prompt_embed.repeat(config.train.batch_size, 1, 1)
 
+    pkpo_enabled = getattr(config, "pkpo", None) is not None and config.pkpo.enabled
+    n_per_prompt = config.pkpo.n if pkpo_enabled else 1
+
     # initialize stat tracker
-    if config.per_prompt_stat_tracking:
+    if config.per_prompt_stat_tracking and not pkpo_enabled:
         stat_tracker = PerPromptStatTracker(
             config.per_prompt_stat_tracking.buffer_size,
             config.per_prompt_stat_tracking.min_count,
@@ -267,6 +271,7 @@ def main(_):
     # Train!
     samples_per_epoch = (
         config.sample.batch_size
+        * n_per_prompt
         * accelerator.num_processes
         * config.sample.num_batches_per_epoch
     )
@@ -279,6 +284,8 @@ def main(_):
     logger.info("***** Running training *****")
     logger.info(f"  Num Epochs = {config.num_epochs}")
     logger.info(f"  Sample batch size per device = {config.sample.batch_size}")
+    if pkpo_enabled:
+        logger.info(f"  PKPO enabled: n={config.pkpo.n} samples per prompt")
     logger.info(f"  Train batch size per device = {config.train.batch_size}")
     logger.info(
         f"  Gradient Accumulation steps = {config.train.gradient_accumulation_steps}"
@@ -293,8 +300,9 @@ def main(_):
     )
     logger.info(f"  Number of inner epochs = {config.train.num_inner_epochs}")
 
-    assert config.sample.batch_size >= config.train.batch_size
-    assert config.sample.batch_size % config.train.batch_size == 0
+    effective_sample_batch = config.sample.batch_size * n_per_prompt
+    assert effective_sample_batch >= config.train.batch_size
+    assert effective_sample_batch % config.train.batch_size == 0
     assert samples_per_epoch % total_train_batch_size == 0
 
     if config.resume_from:
@@ -316,12 +324,33 @@ def main(_):
             disable=not accelerator.is_local_main_process,
             position=0,
         ):
-            # generate prompts
-            prompts, prompt_metadata = zip(
+            # generate prompts (batch_size = number of unique prompts per device)
+            prompts_base, prompt_metadata_base = zip(
                 *[
                     prompt_fn(**config.prompt_fn_kwargs)
                     for _ in range(config.sample.batch_size)
                 ]
+            )
+            if pkpo_enabled:
+                n = config.pkpo.n
+                prompts = []
+                prompt_metadata = []
+                group_ids = []
+                for p_idx, (prompt, meta) in enumerate(
+                    zip(prompts_base, prompt_metadata_base)
+                ):
+                    prompts.extend([prompt] * n)
+                    prompt_metadata.extend([meta] * n)
+                    group_ids.extend([p_idx] * n)
+                group_ids = np.array(group_ids, dtype=np.int64)
+            else:
+                prompts = list(prompts_base)
+                prompt_metadata = list(prompt_metadata_base)
+                group_ids = None
+
+            sample_batch_size = len(prompts)
+            sample_neg_prompt_embeds = neg_prompt_embed.repeat(
+                sample_batch_size, 1, 1
             )
 
             # encode prompts
@@ -334,6 +363,14 @@ def main(_):
             ).input_ids.to(accelerator.device)
             prompt_embeds = pipeline.text_encoder(prompt_ids)[0]
 
+            # distinct initial noise per trajectory (required for PKPO)
+            generators = [
+                torch.Generator(device=accelerator.device).manual_seed(
+                    config.seed + epoch * 100000 + i * 10000 + gi
+                )
+                for gi in range(sample_batch_size)
+            ]
+
             # sample
             with autocast():
                 images, _, latents, log_probs = pipeline_with_logprob(
@@ -344,6 +381,7 @@ def main(_):
                     guidance_scale=config.sample.guidance_scale,
                     eta=config.sample.eta,
                     output_type="pt",
+                    generator=generators,
                 )
 
             latents = torch.stack(
@@ -351,7 +389,7 @@ def main(_):
             )  # (batch_size, num_steps + 1, 4, 64, 64)
             log_probs = torch.stack(log_probs, dim=1)  # (batch_size, num_steps, 1)
             timesteps = pipeline.scheduler.timesteps.repeat(
-                config.sample.batch_size, 1
+                sample_batch_size, 1
             )  # (batch_size, num_steps)
 
             # compute rewards asynchronously
@@ -359,21 +397,24 @@ def main(_):
             # yield to to make sure reward computation starts
             time.sleep(0)
 
-            samples.append(
-                {
-                    "prompt_ids": prompt_ids,
-                    "prompt_embeds": prompt_embeds,
-                    "timesteps": timesteps,
-                    "latents": latents[
-                        :, :-1
-                    ],  # each entry is the latent before timestep t
-                    "next_latents": latents[
-                        :, 1:
-                    ],  # each entry is the latent after timestep t
-                    "log_probs": log_probs,
-                    "rewards": rewards,
-                }
-            )
+            sample_dict = {
+                "prompt_ids": prompt_ids,
+                "prompt_embeds": prompt_embeds,
+                "timesteps": timesteps,
+                "latents": latents[
+                    :, :-1
+                ],  # each entry is the latent before timestep t
+                "next_latents": latents[
+                    :, 1:
+                ],  # each entry is the latent after timestep t
+                "log_probs": log_probs,
+                "rewards": rewards,
+            }
+            if pkpo_enabled:
+                sample_dict["group_ids"] = torch.as_tensor(
+                    group_ids, device=accelerator.device
+                )
+            samples.append(sample_dict)
 
         # wait for all rewards to be computed
         for sample in tqdm(
@@ -417,19 +458,37 @@ def main(_):
         accelerator.wait_for_everyone()
         torch.cuda.synchronize()
         rewards = accelerator.gather(samples["rewards"]).cpu().numpy()
-        # log rewards and images
-        accelerator.log(
-            {
-                "reward": rewards,
-                "epoch": epoch,
-                "reward_mean": rewards.mean(),
-                "reward_std": rewards.std(),
-            },
-            step=global_step,
-        )
+        raw_rewards = rewards.copy()
 
-        # per-prompt mean/std tracking
-        if config.per_prompt_stat_tracking:
+        current_k = current_pkpo_k(epoch, config.pkpo) if pkpo_enabled else 1
+        log_payload = {
+            "reward": rewards,
+            "epoch": epoch,
+            "reward_mean": rewards.mean(),
+            "reward_std": rewards.std(),
+        }
+
+        if pkpo_enabled:
+            group_ids = (
+                accelerator.gather(samples["group_ids"]).cpu().numpy().astype(np.int64)
+            )
+            if current_k > 1:
+                rewards = apply_pkpo_to_groups(rewards, group_ids, current_k)
+            log_payload.update(
+                {
+                    "pkpo/k": current_k,
+                    "pkpo/n": config.pkpo.n,
+                    "reward_raw_mean": float(raw_rewards.mean()),
+                    "reward_raw_std": float(raw_rewards.std()),
+                    "reward_effective_mean": float(rewards.mean()),
+                    "reward_effective_std": float(rewards.std()),
+                    "pkpo/rho_mean": mean_rho_per_group(
+                        raw_rewards, group_ids, current_k
+                    ),
+                }
+            )
+            advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
+        elif config.per_prompt_stat_tracking:
             # gather the prompts across processes
             prompt_ids = accelerator.gather(samples["prompt_ids"]).cpu().numpy()
             prompts = pipeline.tokenizer.batch_decode(
@@ -438,6 +497,8 @@ def main(_):
             advantages = stat_tracker.update(prompts, rewards)
         else:
             advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
+
+        accelerator.log(log_payload, step=global_step)
 
         # ungather advantages; we only need to keep the entries corresponding to the samples on this process
         samples["advantages"] = (
@@ -448,11 +509,15 @@ def main(_):
 
         del samples["rewards"]
         del samples["prompt_ids"]
+        if "group_ids" in samples:
+            del samples["group_ids"]
 
         total_batch_size, num_timesteps = samples["timesteps"].shape
         assert (
             total_batch_size
-            == config.sample.batch_size * config.sample.num_batches_per_epoch
+            == config.sample.batch_size
+            * n_per_prompt
+            * config.sample.num_batches_per_epoch
         )
         assert num_timesteps == config.sample.num_steps
 

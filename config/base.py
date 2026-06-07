@@ -114,4 +114,16 @@ def get_config():
     # contains fewer than `min_count` values, the mean and std of the entire batch will be used instead.
     config.per_prompt_stat_tracking.min_count = 16
 
+    ###### PKPO (Pass-at-k Policy Optimization) ######
+    # When enabled, sample pkpo.n completions per prompt and transform rewards with
+    # sloo_minus_one before computing advantages. 
+    config.pkpo = pkpo = ml_collections.ConfigDict()
+    pkpo.enabled = False
+    pkpo.n = 16
+    pkpo.k = 8
+    pkpo.anneal_k = True
+    pkpo.k_start = 8
+    pkpo.k_end = 1
+    pkpo.anneal_epochs = 50
+
     return config
