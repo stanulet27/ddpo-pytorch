@@ -9,6 +9,10 @@ from collections.abc import Callable
 
 import numpy as np
 
+# --------------------------------------------------------------------------------
+#                           From Listing 1, Appendix B in 
+#           Pass@K Policy Optimization (PKPO) Paper (Walder et. al)
+# --------------------------------------------------------------------------------
 
 def _m_normed(N: int, K: int, i: int, j: int) -> float:
     if i == j and i >= K - 1:
@@ -34,7 +38,6 @@ def _m_diagonal(N: int, K: int) -> np.ndarray:
 
 def rho(g: np.ndarray, K: int) -> float:
     """Estimated pass@k proxy (Equation 12)."""
-    g = np.asarray(g, dtype=float)
     return float((np.sort(g) * _m_diagonal(len(g), K)).sum())
 
 
@@ -92,6 +95,20 @@ def sloo_minus_one(g: np.ndarray, K: int) -> np.ndarray:
         return g.copy()
     return s(g, K) - _b(g, K - 1) * K / (K - 1) / n
 
+
+# --------------------------------------------------------------------------------
+#                                   END OF WORK FROM
+#                           From Listing 1, Appendix B in 
+#           Pass@K Policy Optimization (PKPO) Paper (Walder et. al)
+# --------------------------------------------------------------------------------
+
+
+
+
+# --------------------------------------------------------------------------------
+#                             Our integration contribution
+#                       Please see 
+# --------------------------------------------------------------------------------
 
 def apply_pkpo_to_groups(
     rewards: np.ndarray,

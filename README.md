@@ -37,36 +37,6 @@ However, these are not defined explicitly but are instead defined implicitly by 
 
 At the beginning of each training run, the script will print out the calculated value for the number of images generated per epoch, the effective total training batch size, and the number of training steps per epoch. Make sure to double-check these numbers!
 
-### PKPO (Pass-at-k Policy Optimization)
-
-PKPO is a drop-in reward transform for training (see `ddpo_pytorch/pkpo.py`). When `pkpo.enabled=True`:
-
-- `sample.batch_size` is the number of **unique prompts** per sampling batch.
-- The trainer generates `pkpo.n` independent images per prompt (distinct RNG seeds).
-- Raw ensemble rewards are transformed with `sloo_minus_one` (paper Listing 1) using target `k` before advantages are computed.
-- Optional **k-annealing**: set `pkpo.anneal_k=True` to linearly move from `pkpo.k_start` to `pkpo.k_end` over `pkpo.anneal_epochs`.
-
-**Compute / memory:** enabling PKPO multiplies sampling cost by roughly `pkpo.n`. Start with `pkpo.n=4`, `pkpo.k=2`, `sample.batch_size=1` on a single GPU.
-
-```bash
-accelerate launch scripts/train.py \
-  --config config/pkpo_smoke.py
-```
-
-Or override the default config:
-
-```bash
-accelerate launch scripts/train.py \
-  --config.pkpo.enabled=True \
-  --config.pkpo.n=8 \
-  --config.pkpo.k=4 \
-  --config.pkpo.anneal_k=False
-```
-
-Wandb logs include `pkpo/k`, `reward_raw_mean`, `reward_effective_mean`, and `pkpo/rho_mean` when PKPO is enabled.
-
-Unit tests: `pytest tests/test_pkpo.py`
-
 ## Reproducing Results
 The image at the top of this README was generated using LoRA! However, I did use a fairly powerful DGX machine with 8xA100 GPUs, on which each experiment took about 4 hours for 100 epochs. In order to run the same experiments with a single small GPU, you would set `sample.batch_size = train.batch_size = 1` and multiply `sample.num_batches_per_epoch` and `train.gradient_accumulation_steps` accordingly.
 

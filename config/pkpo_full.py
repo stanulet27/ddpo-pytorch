@@ -1,9 +1,3 @@
-"""Full PKPO training preset for CARVE teddy-bear erasure (Modal / multi-GPU).
-
-Tuned for ~8x A100: n=8 samples per prompt, k anneals 8→1, 100 epochs.
-Does not modify config/base.py.
-"""
-
 import imp
 import os
 

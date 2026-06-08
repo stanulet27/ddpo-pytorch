@@ -246,11 +246,13 @@ def main(_):
     )[0]
     train_neg_prompt_embeds = neg_prompt_embed.repeat(config.train.batch_size, 1, 1)
 
+
+    # gets whether or not pkpo set in the config file for the run
     pkpo_enabled = getattr(config, "pkpo", None) is not None and config.pkpo.enabled
     n_per_prompt = config.pkpo.n if pkpo_enabled else 1
 
     # initialize stat tracker
-    if config.per_prompt_stat_tracking and not pkpo_enabled:
+    if config.per_prompt_stat_tracking and not pkpo_enabled: # disable og baseline if using PKPO
         stat_tracker = PerPromptStatTracker(
             config.per_prompt_stat_tracking.buffer_size,
             config.per_prompt_stat_tracking.min_count,
@@ -271,7 +273,7 @@ def main(_):
     # Train!
     samples_per_epoch = (
         config.sample.batch_size
-        * n_per_prompt
+        * n_per_prompt # every generation n prompts applied
         * accelerator.num_processes
         * config.sample.num_batches_per_epoch
     )
@@ -461,12 +463,14 @@ def main(_):
         raw_rewards = rewards.copy()
 
         current_k = current_pkpo_k(epoch, config.pkpo) if pkpo_enabled else 1
-        log_payload = {
+        accelerator.log({
             "reward": rewards,
             "epoch": epoch,
             "reward_mean": rewards.mean(),
             "reward_std": rewards.std(),
-        }
+        },
+        step=global_step
+        )
 
         if pkpo_enabled:
             group_ids = (
@@ -474,7 +478,7 @@ def main(_):
             )
             if current_k > 1:
                 rewards = apply_pkpo_to_groups(rewards, group_ids, current_k)
-            log_payload.update(
+            accelerator.log(
                 {
                     "pkpo/k": current_k,
                     "pkpo/n": config.pkpo.n,
@@ -485,7 +489,8 @@ def main(_):
                     "pkpo/rho_mean": mean_rho_per_group(
                         raw_rewards, group_ids, current_k
                     ),
-                }
+                },
+                step=global_step
             )
             advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
         elif config.per_prompt_stat_tracking:
@@ -497,8 +502,6 @@ def main(_):
             advantages = stat_tracker.update(prompts, rewards)
         else:
             advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
-
-        accelerator.log(log_payload, step=global_step)
 
         # ungather advantages; we only need to keep the entries corresponding to the samples on this process
         samples["advantages"] = (

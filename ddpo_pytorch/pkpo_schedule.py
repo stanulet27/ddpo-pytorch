@@ -7,8 +7,7 @@ def current_pkpo_k(epoch: int, pkpo_config) -> int:
     if not pkpo_config.anneal_k:
         k = int(pkpo_config.k)
     else:
-        anneal_epochs = max(int(pkpo_config.anneal_epochs), 1)
+        anneal_epochs = int(pkpo_config.anneal_epochs)
         t = min(float(epoch) / anneal_epochs, 1.0)
-        k_float = pkpo_config.k_start + t * (pkpo_config.k_end - pkpo_config.k_start)
-        k = int(round(k_float))
-    return max(1, min(k, n))
+        k = int(round(pkpo_config.k_start + t * (pkpo_config.k_end - pkpo_config.k_start)))
+    return max(1, k)
